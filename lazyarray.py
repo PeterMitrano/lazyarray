@@ -14,13 +14,14 @@ from functools import wraps, reduce
 import logging
 
 import numpy as np
+
 try:
     from scipy import sparse
     from scipy.sparse import bsr_matrix, coo_matrix, csc_matrix, csr_matrix, dia_matrix, dok_matrix, lil_matrix
+
     have_scipy = True
 except ImportError:
     have_scipy = False
-
 
 __version__ = "0.4.0"
 
@@ -32,12 +33,14 @@ def check_shape(meth):
     Decorator for larray magic methods, to ensure that the operand has
     the same shape as the array.
     """
+
     @wraps(meth)
     def wrapped_meth(self, val):
         if isinstance(val, (larray, np.ndarray)) and val.shape:
             if val.shape != self._shape:
                 raise ValueError("shape mismatch: objects cannot be broadcast to a single shape")
         return meth(self, val)
+
     return wrapped_meth
 
 
@@ -47,6 +50,7 @@ def requires_shape(meth):
         if self._shape is None:
             raise ValueError("Shape of larray not specified")
         return meth(self, *args, **kwargs)
+
     return wrapped_meth
 
 
@@ -66,6 +70,7 @@ def partial_shape(addr, full_shape):
     """
     Calculate the size of the sub-array represented by `addr`
     """
+
     def size(x, max):
         if isinstance(x, (int, np.integer)):
             return None
@@ -92,12 +97,16 @@ def partial_shape(addr, full_shape):
 
 def reverse(func):
     """Given a function f(a, b), returns f(b, a)"""
+
     @wraps(func)
     def reversed_func(a, b):
         return func(b, a)
+
     reversed_func.__doc__ = "Reversed argument form of %s" % func.__doc__
     reversed_func.__name__ = "reversed %s" % func.__name__
     return reversed_func
+
+
 # "The hash of a function object is hash(func_code) ^ id(func_globals)" ?
 # see http://mail.python.org/pipermail/python-dev/2000-April/003397.html
 
@@ -110,6 +119,7 @@ def lazy_operation(name, reversed=False):
             f = reverse(f)
         new_map.operations.append((f, val))
         return new_map
+
     return check_shape(op)
 
 
@@ -117,6 +127,7 @@ def lazy_inplace_operation(name):
     def op(self, val):
         self.operations.append((getattr(operator, name), val))
         return self
+
     return check_shape(op)
 
 
@@ -125,6 +136,7 @@ def lazy_unary_operation(name):
         new_map = deepcopy(self)
         new_map.operations.append((getattr(operator, name), None))
         return new_map
+
     return op
 
 
@@ -147,7 +159,6 @@ def is_array_like(value):
     return True
 
 
-
 class larray(object):
     """
     Optimises storage of and operations on arrays in various ways:
@@ -162,7 +173,6 @@ class larray(object):
       - in parallelized code, different rows or columns may be evaluated
         on different nodes or in different threads.
     """
-
 
     def __init__(self, value, shape=None, dtype=None):
         """
@@ -195,7 +205,7 @@ class larray(object):
             elif not isinstance(value, np.ndarray):
                 value = np.array(value, dtype=dtype)
             elif dtype is not None:
-               assert np.can_cast(value.dtype, dtype, casting='safe')  # or could convert value to the provided dtype
+                assert np.can_cast(value.dtype, dtype, casting='safe')  # or could convert value to the provided dtype
             if shape and value.shape and value.shape != shape:
                 raise ValueError("Array has shape %s, value has shape %s" % (shape, value.shape))
             if value.shape:
@@ -233,7 +243,7 @@ class larray(object):
     def __deepcopy__(self, memo):
         obj = type(self).__new__(type(self))
         if isinstance(self.base_value, VectorizedIterable):  # special case, but perhaps need to rethink
-            obj.base_value = self.base_value                 # whether deepcopy is appropriate everywhere
+            obj.base_value = self.base_value  # whether deepcopy is appropriate everywhere
         else:
             try:
                 obj.base_value = deepcopy(self.base_value)
@@ -257,13 +267,14 @@ class larray(object):
 
     def _set_shape(self, value):
         if (hasattr(self.base_value, "shape") and
-                self.base_value.shape and   # values of type np.float have an empty shape
-                    self.base_value.shape != value):
+                self.base_value.shape and  # values of type np.float have an empty shape
+                self.base_value.shape != value):
             raise ValueError("Lazy array has fixed shape %s, cannot be changed to %s" % (self.base_value.shape, value))
         self._shape = value
         for op in self.operations:
             if isinstance(op[1], larray):
                 op[1].shape = value
+
     shape = property(fget=lambda self: self._shape,
                      fset=_set_shape, doc="Shape of the array")
 
@@ -319,9 +330,9 @@ class larray(object):
                 return x
             elif isinstance(x, slice):  # need to handle negative values in slice
                 return np.arange((x.start or 0),
-                                    (x.stop or max),
-                                    (x.step or 1),
-                                    dtype=int)
+                                 (x.stop or max),
+                                 (x.step or 1),
+                                 dtype=int)
             elif isinstance(x, collections.Sized):
                 if hasattr(x, 'dtype') and x.dtype == bool:
                     return np.arange(max)[x]
@@ -329,6 +340,7 @@ class larray(object):
                     return np.array(x)
             else:
                 raise TypeError("Unsupported index type %s" % type(x))
+
         addr = self._full_address(addr)
         if isinstance(addr, np.ndarray) and addr.dtype == bool:
             if addr.ndim == 1:
@@ -378,9 +390,24 @@ class larray(object):
             base_val = self.base_value[addr]
         elif callable(self.base_value):
             indices = self._array_indices(addr)
-            base_val = self.base_value(*indices)
-            if isinstance(base_val, np.ndarray) and base_val.shape == (1,):
-                base_val = base_val[0]
+            # handle the 2D case where indices might be lists
+
+            if len(indices) == 2:
+                i, j = indices
+                if isinstance(i, np.ndarray) and isinstance(j, np.ndarray):
+                    base_vals = []
+                    for _i in i:
+                        for _j in j:
+                            base_vals.append(self.base_value(_i, _j))
+                    vase_val = np.array(base_vals)
+                if isinstance(i, np.ndarray):
+                    base_val = np.array([self.base_value(_i, j) for _i in i])
+                elif isinstance(j, np.ndarray):
+                    base_val = np.array([self.base_value(i, _j) for _j in j])
+                else:
+                    base_val = self.base_value(*indices)
+            else:
+                base_val = self.base_value(*indices)
         elif hasattr(self.base_value, "lazily_evaluate"):
             base_val = self.base_value.lazily_evaluate(addr, shape=self._shape)
         elif isinstance(self.base_value, VectorizedIterable):
@@ -389,7 +416,8 @@ class larray(object):
                 n = reduce(operator.mul, partial_shape)
             else:
                 n = 1
-            base_val = self.base_value.next(n)  # note that the array contents will depend on the order of access to elements
+            base_val = self.base_value.next(
+                n)  # note that the array contents will depend on the order of access to elements
             if n == 1:
                 base_val = base_val[0]
             elif partial_shape and base_val.shape != partial_shape:
@@ -405,6 +433,7 @@ class larray(object):
         """
         Check whether the given address is within the array bounds.
         """
+
         def is_boolean_array(arr):
             return hasattr(arr, 'dtype') and arr.dtype == bool
 
@@ -433,6 +462,7 @@ class larray(object):
                 raise TypeError("Invalid array address: %s (element of type %s)" % (str(addr), type(x)))
             if (lower < -size) or (upper >= size):
                 raise IndexError("Index out of bounds")
+
         full_addr = self._full_address(addr)
         if isinstance(addr, np.ndarray) and addr.dtype == bool:
             if len(addr.shape) > len(self._shape):
@@ -499,7 +529,7 @@ class larray(object):
             if x.shape != self._shape:
                 x = x.reshape(self._shape)
         elif have_scipy and sparse.issparse(self.base_value):  # For sparse matrices
-            if empty_val!=0:
+            if empty_val != 0:
                 x = self.base_value.toarray((sparse.csc_matrix))
                 x = np.where(x, x, np.nan)
             else:
@@ -556,6 +586,7 @@ class larray(object):
 
 def _build_ufunc(func):
     """Return a ufunc that works with lazy arrays"""
+
     def larray_compatible_ufunc(x):
         if isinstance(x, larray):
             y = deepcopy(x)
@@ -563,6 +594,7 @@ def _build_ufunc(func):
             return y
         else:
             return func(x)
+
     return larray_compatible_ufunc
 
 
